@@ -1,0 +1,80 @@
+name: Rebuild API Mega List
+
+on:
+  # Run automatically every day at midnight UTC.
+  schedule:
+    - cron: "0 0 * * *"
+
+  # Allow manual runs from the GitHub Actions UI.
+  workflow_dispatch:
+
+  # Rebuild when markdown source files on main change.
+  push:
+    branches:
+      - main
+    paths:
+      - "main/**/*.md"
+      - "main/**/*.markdown"
+      - "main/**/*.mdown"
+      - "main/**/*.mkdn"
+      - "*-apis-*/**/*.md"
+      - "*-apis-*/**/*.markdown"
+      - "mcp-servers-apis-*/**/*.md"
+      - "seo-tools-apis-*/**/*.md"
+      - "rebuild_list.py"
+      - ".github/workflows/rebuild-list.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild-list:
+    name: Rebuild consolidated API list
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Required so the workflow can push its generated commit.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # The rebuild script currently uses only the Python standard library.
+          # Keep this step so future parser dependencies can be added explicitly.
+
+      - name: Rebuild CSV and JSON artifacts
+        run: python rebuild_list.py
+
+      - name: Verify generated artifacts exist
+        run: |
+          test -f dist/api_mega_list.csv
+          test -f dist/api_mega_list.json
+
+      - name: Detect generated file changes
+        id: changes
+        run: |
+          if git diff --quiet -- dist/api_mega_list.csv dist/api_mega_list.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No generated artifact changes detected."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Generated artifact changes detected."
+          fi
+
+      - name: Commit and push generated artifacts
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add dist/api_mega_list.csv dist/api_mega_list.json
+          git commit -m "chore: rebuild consolidated API mega list"
+          git push
